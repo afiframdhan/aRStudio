@@ -45,7 +45,23 @@ function setText(sel, v){
   var e = one(sel);
   if (e) e.textContent = v || '';
 }
-function cacheKey(){ return 'arStudioData:v6:' + PAGE; }
+function cacheKey(page){ return 'arStudioData:v7:' + String(page || PAGE); }
+function readCacheFor(page){
+  try {
+    var x = JSON.parse(localStorage.getItem(cacheKey(page)) || 'null');
+    if (!x || !x.ts || !x.data) return null;
+    return x;
+  } catch(e){ return null; }
+}
+function portfolioFallbackCache(){
+  if (PAGE !== 'portfolio') return null;
+  var home = readCacheFor('home');
+  if (!home || !home.data) return null;
+  var audio = Array.isArray(home.data.audio) ? home.data.audio : [];
+  var videos = Array.isArray(home.data.videos) ? home.data.videos : [];
+  if (!audio.length && !videos.length) return null;
+  return { ts: home.ts, data: { settings: home.data.settings || {}, audio: audio, videos: videos }, partial: true };
+}
 function readCache(){
   try {
     var x = JSON.parse(localStorage.getItem(cacheKey()) || 'null');
@@ -559,13 +575,25 @@ function finish(){
 
 bindStatic();
 var cached = readCache();
-if (cached) {
-  DATA = cached.data || {};
+var fallbackCached = null;
+if (!cached) fallbackCached = portfolioFallbackCache();
+var visibleCache = cached || fallbackCached;
+if (visibleCache) {
+  DATA = visibleCache.data || {};
   render();
   finish();
-  if (cacheFresh(cached)) return;
+} else if (PAGE === 'portfolio') {
+  // Jangan tahan seluruh halaman dengan overlay loader saat data jaringan sedang diambil.
+  // Tampilkan state loading yang jujur, lalu ganti saat Supabase selesai.
+  var audioLoading = one('#portfolioAudioList');
+  var videoLoading = one('#portfolioVideoList');
+  if (audioLoading) audioLoading.innerHTML = '<div class="empty-state">Memuat audio portfolio…</div>';
+  if (videoLoading) videoLoading.innerHTML = '<div class="empty-state">Memuat video portfolio…</div>';
+  finish();
 }
 
+// Stale-while-revalidate: cache membuat navigasi terasa instan, tetapi data Supabase
+// selalu dicek lagi di background agar perubahan portfolio langsung ikut tampil.
 loadWebsiteData().then(function(d){
   DATA = d || {};
   writeCache(DATA);
@@ -575,13 +603,13 @@ loadWebsiteData().then(function(d){
   finish();
 }).catch(function(err){
   console.error(err);
-  if (!cached) {
+  if (!visibleCache) {
     DATA = { prices: DEFAULT_PRICES };
     render();
   }
   var st = one('#dataStatus');
   if (st) {
-    st.textContent = cached ? 'Menampilkan data tersimpan. Update terbaru belum dapat dimuat.' : 'Price list lokal ditampilkan. Data Supabase belum dapat dimuat.';
+    st.textContent = visibleCache ? 'Menampilkan data tersimpan. Update terbaru belum dapat dimuat.' : 'Data Supabase belum dapat dimuat.';
   }
   finish();
 });
