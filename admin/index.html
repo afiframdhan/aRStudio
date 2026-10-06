@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>AR Studio Admin Upload</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b0b0c;color:#f5f5f5;font-family:Manrope,system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px}.card{width:min(560px,100%);background:#151517;border:1px solid #2b2b2f;border-radius:24px;padding:28px;box-shadow:0 20px 70px rgba(0,0,0,.35)}h1{margin:0 0 8px;font-size:28px}.muted{color:#a9a9b2;font-size:14px;line-height:1.6}.grid{display:grid;gap:14px;margin-top:24px}label{font-size:13px;color:#c9c9d0}input,button{width:100%;border-radius:12px;border:1px solid #34343a;background:#0f0f11;color:#fff;padding:13px 14px;font:inherit}button{border:0;background:#f97316;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#29292e}.hidden{display:none}.status{font-size:14px;min-height:22px}.ok{color:#7ce38b}.err{color:#ff8585}.file-result{padding:14px;border:1px solid #34343a;border-radius:14px;background:#101012;word-break:break-all}.row{display:flex;gap:10px}.row>*{flex:1}@media(max-width:520px){.row{flex-direction:column}.card{padding:20px;border-radius:18px}}
+</style>
+</head>
+<body>
+<main class="card">
+  <div><strong style="color:#f97316">AR STUDIO</strong><h1>Admin Upload</h1><p class="muted">Login Supabase hanya dipakai untuk memverifikasi bahwa upload Google Drive dilakukan oleh admin yang diizinkan.</p></div>
+  <section id="loginBox" class="grid">
+    <div><label>Email admin</label><input id="email" type="email" autocomplete="username"></div>
+    <div><label>Password</label><input id="password" type="password" autocomplete="current-password"></div>
+    <button id="loginBtn">Masuk</button>
+    <div id="loginStatus" class="status"></div>
+  </section>
+  <section id="uploadBox" class="grid hidden">
+    <div class="row"><div><b id="userEmail"></b><div class="muted">Supabase session aktif</div></div><button id="logoutBtn" class="secondary" style="max-width:140px">Keluar</button></div>
+    <div><label>Pilih file (maks. 20 MB)</label><input id="fileInput" type="file"></div>
+    <button id="uploadBtn">Upload ke Google Drive</button>
+    <div id="uploadStatus" class="status"></div>
+    <div id="fileResult" class="file-result hidden"></div>
+  </section>
+</main>
+<iframe name="driveUploadTarget" id="driveUploadTarget" class="hidden"></iframe>
+<form id="driveUploadForm" method="post" target="driveUploadTarget" class="hidden">
+  <input name="access_token" id="accessTokenField">
+  <input name="file_name" id="fileNameField">
+  <input name="mime_type" id="mimeTypeField">
+  <input name="file_base64" id="fileBase64Field">
+  <input name="make_public" value="true">
+</form>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../config.js?v=8"></script>
+<script>
+(function(){
+  var cfg=window.AR_STUDIO_CONFIG||{}, client=null;
+  function $(id){return document.getElementById(id)}
+  function status(id,msg,ok){var e=$(id);e.textContent=msg||'';e.className='status '+(msg?(ok?'ok':'err'):'')}
+  function getClient(){if(client)return client;if(!cfg.SUPABASE_URL||!cfg.SUPABASE_PUBLISHABLE_KEY)throw new Error('Supabase belum dikonfigurasi.');client=supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:true,autoRefreshToken:true}});return client}
+  async function refresh(){var r=await getClient().auth.getSession(), ses=r.data.session;$('loginBox').classList.toggle('hidden',!!ses);$('uploadBox').classList.toggle('hidden',!ses);$('userEmail').textContent=ses&&ses.user?ses.user.email:'';return ses}
+  $('loginBtn').onclick=async function(){try{status('loginStatus','Masuk...',true);var r=await getClient().auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});if(r.error)throw r.error;status('loginStatus','',true);await refresh()}catch(e){status('loginStatus',e.message||String(e),false)}};
+  $('logoutBtn').onclick=async function(){await getClient().auth.signOut();await refresh()};
+  $('uploadBtn').onclick=async function(){
+    try{
+      var ses=await refresh(), file=$('fileInput').files[0]; if(!ses)throw new Error('Silakan login.');if(!file)throw new Error('Pilih file terlebih dahulu.');if(file.size>20*1024*1024)throw new Error('Ukuran file lebih dari 20 MB.');if(!cfg.DRIVE_UPLOAD_URL)throw new Error('DRIVE_UPLOAD_URL belum diisi di config.js.');
+      status('uploadStatus','Menyiapkan file...',true);$('uploadBtn').disabled=true;$('fileResult').classList.add('hidden');
+      var dataUrl=await new Promise(function(resolve,reject){var fr=new FileReader();fr.onload=function(){resolve(fr.result)};fr.onerror=reject;fr.readAsDataURL(file)});
+      $('driveUploadForm').action=cfg.DRIVE_UPLOAD_URL;$('accessTokenField').value=ses.access_token;$('fileNameField').value=file.name;$('mimeTypeField').value=file.type||'application/octet-stream';$('fileBase64Field').value=String(dataUrl).split(',')[1]||'';
+      status('uploadStatus','Mengupload ke Google Drive...',true);$('driveUploadForm').submit();
+    }catch(e){$('uploadBtn').disabled=false;status('uploadStatus',e.message||String(e),false)}
+  };
+  window.addEventListener('message',function(e){var d=e.data||{};if(d.source!=='ar-studio-drive-upload')return;$('uploadBtn').disabled=false;var p=d.payload||{};if(!p.success){status('uploadStatus',p.message||'Upload gagal.',false);return}status('uploadStatus','✓ Upload berhasil.',true);$('fileResult').innerHTML='<b>Google Drive URL</b><br><a style="color:#f97316" target="_blank" rel="noopener" href="'+p.url+'">'+p.url+'</a><br><br><b>Preview URL</b><br>'+p.previewUrl;$('fileResult').classList.remove('hidden')});
+  refresh().catch(function(e){status('loginStatus',e.message||String(e),false)});
+})();
+</script>
+</body>
+</html>
