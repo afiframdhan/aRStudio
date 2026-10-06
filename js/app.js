@@ -8,6 +8,8 @@ var SUPABASE_KEY = String(CFG.SUPABASE_PUBLISHABLE_KEY || '').trim();
 var SB = null;
 var BASE_PATH = String(CFG.BASE_PATH || '/ar-studio-recording/');
 var CACHE_MINUTES = Math.max(1, Number(CFG.CACHE_MINUTES || 10));
+var HOME_AUDIO_LIMIT = Math.max(1, Number(CFG.HOME_AUDIO_LIMIT || 3));
+var HOME_VIDEO_LIMIT = Math.max(1, Number(CFG.HOME_VIDEO_LIMIT || 3));
 var DATA = {}, playing = null, priceLookup = {}, selectedService = '';
 
 var DEFAULT_PRICES = [
@@ -45,23 +47,7 @@ function setText(sel, v){
   var e = one(sel);
   if (e) e.textContent = v || '';
 }
-function cacheKey(page){ return 'arStudioData:v7:' + String(page || PAGE); }
-function readCacheFor(page){
-  try {
-    var x = JSON.parse(localStorage.getItem(cacheKey(page)) || 'null');
-    if (!x || !x.ts || !x.data) return null;
-    return x;
-  } catch(e){ return null; }
-}
-function portfolioFallbackCache(){
-  if (PAGE !== 'portfolio') return null;
-  var home = readCacheFor('home');
-  if (!home || !home.data) return null;
-  var audio = Array.isArray(home.data.audio) ? home.data.audio : [];
-  var videos = Array.isArray(home.data.videos) ? home.data.videos : [];
-  if (!audio.length && !videos.length) return null;
-  return { ts: home.ts, data: { settings: home.data.settings || {}, audio: audio, videos: videos }, partial: true };
-}
+function cacheKey(){ return 'arStudioData:v6:' + PAGE; }
 function readCache(){
   try {
     var x = JSON.parse(localStorage.getItem(cacheKey()) || 'null');
@@ -131,7 +117,7 @@ function loadSettings(){
 function loadWebsiteData(){
   var jobs = [loadSettings()];
   if (PAGE === 'home') {
-    jobs.push(loadTable('services', 5), loadTable('audio_portfolio', 3), loadTable('video_portfolio', 3), loadTable('price_list', 5), loadTable('gallery', 6), loadTable('case_studies', 2), loadTable('testimonials', 3));
+    jobs.push(loadTable('services', 5), loadTable('audio_portfolio', HOME_AUDIO_LIMIT), loadTable('video_portfolio', HOME_VIDEO_LIMIT), loadTable('price_list', 5), loadTable('gallery', 6), loadTable('case_studies', 2), loadTable('testimonials', 3));
     return Promise.all(jobs).then(function(r){ return {settings:r[0],services:r[1],audio:r[2],videos:r[3],prices:r[4],gallery:r[5],caseStudies:r[6],testimonials:r[7]}; });
   }
   if (PAGE === 'portfolio') {
@@ -575,25 +561,15 @@ function finish(){
 
 bindStatic();
 var cached = readCache();
-var fallbackCached = null;
-if (!cached) fallbackCached = portfolioFallbackCache();
-var visibleCache = cached || fallbackCached;
-if (visibleCache) {
-  DATA = visibleCache.data || {};
+if (cached) {
+  // Tampilkan cache seketika agar navigasi terasa cepat.
+  DATA = cached.data || {};
   render();
-  finish();
-} else if (PAGE === 'portfolio') {
-  // Jangan tahan seluruh halaman dengan overlay loader saat data jaringan sedang diambil.
-  // Tampilkan state loading yang jujur, lalu ganti saat Supabase selesai.
-  var audioLoading = one('#portfolioAudioList');
-  var videoLoading = one('#portfolioVideoList');
-  if (audioLoading) audioLoading.innerHTML = '<div class="empty-state">Memuat audio portfolio…</div>';
-  if (videoLoading) videoLoading.innerHTML = '<div class="empty-state">Memuat video portfolio…</div>';
   finish();
 }
 
-// Stale-while-revalidate: cache membuat navigasi terasa instan, tetapi data Supabase
-// selalu dicek lagi di background agar perubahan portfolio langsung ikut tampil.
+// Selalu cek Supabase di background, meskipun cache masih fresh.
+// Ini membuat perubahan dari Supabase muncul segera tanpa menunggu TTL cache.
 loadWebsiteData().then(function(d){
   DATA = d || {};
   writeCache(DATA);
@@ -603,13 +579,13 @@ loadWebsiteData().then(function(d){
   finish();
 }).catch(function(err){
   console.error(err);
-  if (!visibleCache) {
+  if (!cached) {
     DATA = { prices: DEFAULT_PRICES };
     render();
   }
   var st = one('#dataStatus');
   if (st) {
-    st.textContent = visibleCache ? 'Menampilkan data tersimpan. Update terbaru belum dapat dimuat.' : 'Data Supabase belum dapat dimuat.';
+    st.textContent = cached ? 'Menampilkan data tersimpan. Update terbaru belum dapat dimuat.' : 'Price list lokal ditampilkan. Data Supabase belum dapat dimuat.';
   }
   finish();
 });
